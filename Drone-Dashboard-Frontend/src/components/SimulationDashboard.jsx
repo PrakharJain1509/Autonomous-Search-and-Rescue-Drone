@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Maximize2, Monitor, Camera } from "lucide-react";
 
 const SERVER_WS_URL = "ws://localhost:8765";
-const SIMULATION_URL = "http://127.0.0.1:5500/fly-by/index.html";
+const SIMULATION_URL = "http://127.0.0.1:5500/Autonomous-Search-and-Rescue-Drone/Drone-UI/index.html";
 
 const DEFAULT_IMAGE = "/test_data/thermal/no_human/FLIR_04123_jpeg_jpg.rf.fa8691c9bfaccaa604ff9cbb7f1af48c.jpg";
 
