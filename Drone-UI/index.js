@@ -130,7 +130,7 @@ const sendWebSocketMessage = (status, modelType, targetName, latitude, longitude
 </html>
 `;
 
-      sendEmail('rohithbiradar2004@gmail.com', emailSubject, latitude, longitude)
+      sendEmail('prakharjain2004@gmail.com', emailSubject, latitude, longitude)
         .then(success => {
           if (!success) {
             console.warn("⚠️ Email notification could not be sent");
@@ -626,7 +626,7 @@ const setTerrainValues = () => {
   };
   tileWidth             = centerTileFromTo * 2; // diff between xFrom - xTo (not accounting for 0)
   amountOfHexInTile     = Math.pow((centerTile.xTo + 1) - centerTile.xFrom, 2); // +1 accounts for 0
-  simplex               = new SimplexNoise("prakhar");
+  simplex               = new SimplexNoise("mahakumbh");
   maxHeight             = 30;
   snowHeight            = maxHeight * 0.9;
   lightSnowHeight       = maxHeight * 0.8;
@@ -1320,16 +1320,16 @@ const listenTo = () => {
   window.addEventListener('resize', resize.bind(this));
   window.addEventListener('keydown', keyDown);
   window.addEventListener('keyup', keyUp);
-  document.querySelector('.hex-music')
-    .addEventListener('click', () => updateMusicVolume());
+  // document.querySelector('.hex-music')
+  //   .addEventListener('click', () => updateMusicVolume());
   // document.querySelector('.hex-info')
   //   .addEventListener('click', () => toggleInfoModal());
   // document.querySelector('.info-close')
   //   .addEventListener('click', () => toggleInfoModal(false));
-  document.querySelector('.hex-speed')
-    .addEventListener('click', () => toggleDoubleSpeed());
-  document.querySelector('.hex-birds-eye')
-    .addEventListener('click', () => toggleBirdsEyeView());
+  // document.querySelector('.hex-speed')
+  //   .addEventListener('click', () => toggleDoubleSpeed());
+  // document.querySelector('.hex-birds-eye')
+  //   .addEventListener('click', () => toggleBirdsEyeView());
 
 }
 
@@ -1411,17 +1411,17 @@ const updateMusicVolume = () => {
 const pauseIconAnimation = (pause = true) => {
 
   if(pause) {
-    document.querySelector('.hex-music').classList.add('js-loading');
+    // document.querySelector('.hex-music').classList.add('js-loading');
     // document.querySelector('.hex-info').classList.add('js-loading');
-    document.querySelector('.hex-speed').classList.add('js-loading');
-    document.querySelector('.hex-birds-eye').classList.add('js-loading');
+    // document.querySelector('.hex-speed').classList.add('js-loading');
+    // document.querySelector('.hex-birds-eye').classList.add('js-loading');
     return;
   }
 
-  document.querySelector('.hex-music').classList.remove('js-loading');
+  // document.querySelector('.hex-music').classList.remove('js-loading');
   // document.querySelector('.hex-info').classList.remove('js-loading');
-  document.querySelector('.hex-speed').classList.remove('js-loading');
-  document.querySelector('.hex-birds-eye').classList.remove('js-loading');
+  // document.querySelector('.hex-speed').classList.remove('js-loading');
+  // document.querySelector('.hex-birds-eye').classList.remove('js-loading');
 
 }
 
