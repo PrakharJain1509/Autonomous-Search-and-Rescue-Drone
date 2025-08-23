@@ -26,6 +26,13 @@ let menObjects = new Array(5).fill(null);
 const humanModelTypes = ["image", "thermal", "audio"];
 const humanNames      = ["Alice", "Bob", "Charlie"];
 
+// ✅ ADD THIS NEW CONSTANT
+const HUMAN_LOCATIONS = [
+  [85, 45],   // Coordinates for Alice [x, z]
+  [-40, 110], // Coordinates for Bob [x, z]
+  [60, 150]   // Coordinates for Charlie [x, z]
+];
+
 
 // Add these variables to the existing declarations
 let manGeometry, manMaterial, menInstances, menPositions = [];
@@ -230,11 +237,26 @@ const findClosestMen = () => {
 };
 
 
+// ✅ REPLACE the old spawnMen function with this new one
 const spawnMen = () => {
-  menPositions = generateInitialMenPositions();
-  findClosestMen();
+  // Use the fixed locations directly instead of random generation
+  closestMenPositions = HUMAN_LOCATIONS.map(coords => {
+    const x = coords[0];
+    const z = coords[1];
 
-  console.log('Closest men (X/Z only):');
+    // Get a preliminary terrain height. The final, precise height
+    // will be calculated later in updateMenHeights(), just like before.
+    const groundY = getTerrainHeightAt(x, z);
+
+    return {
+      x,
+      z,
+      y: groundY + 25, // Start high, will be corrected to ground level later
+      loaded: false
+    };
+  });
+
+  console.log('✅ Spawning men at fixed predefined locations:');
   closestMenPositions.forEach((pos, i) => {
     console.log(`${i + 1}. X: ${pos.x.toFixed(1)}, Z: ${pos.z.toFixed(1)}`);
   });
@@ -411,7 +433,9 @@ activeKeysPressed,
 bgMusic,
 muteBgMusic,
 infoModalDisplayed,
-loadingDismissed;
+loadingDismissed,
+simulationStarted = false,
+coordsDisplay;        
 
 const setScene = async () => {
 
@@ -466,6 +490,8 @@ const setScene = async () => {
   resize();
   listenTo();
   render();
+  coordsDisplay = document.getElementById('coords-display');
+
 
   pauseIconAnimation();
   checkLoadingPage();
@@ -1143,6 +1169,13 @@ const toggleBirdsEyeView = () => {
 
 const keyDown = (event) => {
   if (infoModalDisplayed) return;
+  if (event.keyCode === 84 && !simulationStarted) { // 84 is the keyCode for 't'
+    simulationStarted = true;
+    document.getElementById('start-message').style.display = 'none';
+    console.log("🚀 Starting Automated Movement via 'T' key...");
+    startAutomatedMovement();
+    return; // Stop further processing for this key press
+  }
   if (!activeKeysPressed.includes(event.keyCode)) {
     activeKeysPressed.push(event.keyCode);
   }
@@ -1341,6 +1374,10 @@ const render = () => {
     if(mixer) mixer.update(clock.getDelta());
 
     updateMenHeights(); // Check for height updates
+    if (character && coordsDisplay) {
+      const { x, y, z } = character.position;
+      coordsDisplay.innerHTML = `X: ${x.toFixed(1)}<br>Y: ${y.toFixed(1)}<br>Z: ${z.toFixed(1)}`;
+    }
   }
   renderer.render(scene, camera);
   requestAnimationFrame(render.bind(this));
@@ -1433,7 +1470,7 @@ function generateDummyWaypoints(humanPos, count = 4) {
   return waypoints;
 }
 const generateFixedTargets = () => {
-  findClosestMen();  // pick your 3 real humans
+  // findClosestMen();  // pick your 3 real humans
 
   allTargets   = [];
   targetStatus = [];
@@ -1612,10 +1649,10 @@ if (allTargets.length < 3) {
 };
 
 // ✅ Start movement after 2 seconds
-setTimeout(() => {
-  console.log("🚀 Starting Automated Movement...");
-  startAutomatedMovement();
-}, 2000);
+// setTimeout(() => {
+//   console.log("🚀 Starting Automated Movement...");
+//   startAutomatedMovement();
+// }, 2000);
 
 const checkLoadingPage = () => {
 
