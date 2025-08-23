@@ -6,9 +6,26 @@ import SimplexNoise from 'https://cdn.skypack.dev/simplex-noise@3.0.0';
 import { Howl } from 'https://cdn.jsdelivr.net/npm/howler@2.2.3/+esm';
 import { getGPUTier } from 'https://cdn.jsdelivr.net/npm/detect-gpu@5.0.17/+esm';
 
+// Multi-drone configuration
+const DRONE_ID = new URLSearchParams(window.location.search).get('drone_id') || 'D1';
+const SERVER_IP = new URLSearchParams(window.location.search).get('server') || 'localhost';
+const CLIENT_TYPE = new URLSearchParams(window.location.search).get('type') || 'drone';
+
 const container = document.querySelector('.container');
 const canvas = document.querySelector('.canvas');
+
+// Multi-drone variables
 let websocket;
+let droneId = DRONE_ID;
+let clientType = CLIENT_TYPE;
+let otherDrones = {}; // Store other drone positions
+let myRegion = null;
+let myHumans = []; // Humans in my assigned region
+let worldSize = 800; // Increased to match server
+
+// Removed FOV visualization - not needed
+
+// Original variables
 let allTargets = []; 
 let targetStatus = []; // Stores human detection status for each target
 let currentTargetIndex = 0;
@@ -17,6 +34,21 @@ let movementSpeed = 0.3;
 let rotationSpeed = 0.003;
 let lastSentIndex = -1;
 let menNeedingHeightUpdate = [];
+
+// Manual control variables
+let isManualMode = false;
+let manualControls = {
+    forward: false,
+    backward: false,
+    left: false,
+    right: false,
+    up: false,
+    down: false,
+    rotateLeft: false,
+    rotateRight: false
+};
+let manualSpeed = 0.5;
+let manualRotationSpeed = 0.02;
 
 // Add these variables
 let closestMenPositions = [];
@@ -43,6 +75,339 @@ const getTerrainHeightAt = (x, z) => {
   const noise2 = (simplex.noise2D(x * 0.015, z * 0.015) + 1) * 0.75;
   const height = Math.pow(noise1, 1.2) * Math.pow(noise2, 1.2) * maxHeight;
   return Math.max(height, sandHeight);
+};
+
+// Global function to update connection status (accessible from HTML)
+window.updateConnectionStatus = (connected) => {
+    const statusElement = document.getElementById('connection-status');
+    if (statusElement) {
+        if (connected) {
+            statusElement.textContent = '🟢 Connected';
+            statusElement.className = 'status-online';
+        } else {
+            statusElement.textContent = '🔴 Disconnected';
+            statusElement.className = '';
+        }
+    }
+};
+
+// Removed FOV visualization functions - not needed
+
+// Manual control functions
+const toggleManualMode = () => {
+    isManualMode = !isManualMode;
+    console.log(`🎮 Manual mode: ${isManualMode ? 'ON' : 'OFF'}`);
+    
+    // Update UI
+    const modeElement = document.getElementById('control-mode');
+    if (modeElement) {
+        modeElement.textContent = isManualMode ? '🎮 Manual' : '🤖 Auto';
+        modeElement.style.backgroundColor = isManualMode ? 'rgba(255, 193, 7, 0.8)' : 'rgba(76, 175, 80, 0.8)';
+    }
+    
+    // Stop autonomous movement if switching to manual
+    if (isManualMode) {
+        isMoving = false;
+        currentTargetIndex = 0;
+    }
+    
+    // Removed FOV visualization toggle
+};
+
+const handleManualMovement = () => {
+    if (!isManualMode) return;
+    
+    let moved = false;
+    const direction = new THREE.Vector3();
+    
+    // Forward/Backward
+    if (manualControls.forward) {
+        direction.z -= 1;
+        moved = true;
+    }
+    if (manualControls.backward) {
+        direction.z += 1;
+        moved = true;
+    }
+    
+    // Left/Right
+    if (manualControls.left) {
+        direction.x -= 1;
+        moved = true;
+    }
+    if (manualControls.right) {
+        direction.x += 1;
+        moved = true;
+    }
+    
+    // Up/Down
+    if (manualControls.up) {
+        direction.y += 1;
+        moved = true;
+    }
+    if (manualControls.down) {
+        direction.y -= 1;
+        moved = true;
+    }
+    
+    // Apply movement
+    if (moved) {
+        direction.normalize();
+        direction.multiplyScalar(manualSpeed);
+        
+        // Apply to drone position (character is the drone)
+        character.position.add(direction);
+        
+        // Enforce region boundary in manual mode too
+        if (myRegion) {
+            enforceRegionBoundary();
+        }
+        
+        // Update height based on terrain
+        const terrainHeight = getTerrainHeightAt(character.position.x, character.position.z);
+        character.position.y = Math.max(character.position.y, terrainHeight + 40);
+        
+        // Send position to server
+        sendMultiDronePosition();
+    }
+    
+    // Rotation
+    if (manualControls.rotateLeft) {
+        character.rotation.y += manualRotationSpeed;
+        sendMultiDronePosition();
+    }
+    if (manualControls.rotateRight) {
+        character.rotation.y -= manualRotationSpeed;
+        sendMultiDronePosition();
+    }
+};
+
+// Keyboard event handlers
+const handleKeyDown = (event) => {
+    if (!isManualMode) return;
+    
+    switch (event.code) {
+        case 'KeyW': manualControls.forward = true; break;
+        case 'KeyS': manualControls.backward = true; break;
+        case 'KeyA': manualControls.left = true; break;
+        case 'KeyD': manualControls.right = true; break;
+        case 'KeyQ': manualControls.up = true; break;
+        case 'KeyE': manualControls.down = true; break;
+        case 'ArrowLeft': manualControls.rotateLeft = true; break;
+        case 'ArrowRight': manualControls.rotateRight = true; break;
+    }
+};
+
+const handleKeyUp = (event) => {
+    if (!isManualMode) return;
+    
+    switch (event.code) {
+        case 'KeyW': manualControls.forward = false; break;
+        case 'KeyS': manualControls.backward = false; break;
+        case 'KeyA': manualControls.left = false; break;
+        case 'KeyD': manualControls.right = false; break;
+        case 'KeyQ': manualControls.up = false; break;
+        case 'KeyE': manualControls.down = false; break;
+        case 'ArrowLeft': manualControls.rotateLeft = false; break;
+        case 'ArrowRight': manualControls.rotateRight = false; break;
+    }
+};
+
+// Initialize WebSocket connection for multi-drone
+const initializeMultiDroneWebSocket = () => {
+    const wsUrl = `ws://${SERVER_IP}:8765`;
+    websocket = new WebSocket(wsUrl);
+    
+    websocket.onopen = () => {
+        console.log(`🔗 Connected to server as ${clientType} ${droneId}`);
+        
+        // Update connection status
+        if (typeof updateConnectionStatus === 'function') {
+            updateConnectionStatus(true);
+        }
+        
+        // Register with server
+        websocket.send(JSON.stringify({
+            type: "register",
+            drone_id: droneId,
+            client_type: clientType
+        }));
+    };
+    
+    websocket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleServerMessage(data);
+    };
+    
+    websocket.onclose = () => {
+        console.log("❌ WebSocket connection closed");
+        
+        // Update connection status
+        if (typeof updateConnectionStatus === 'function') {
+            updateConnectionStatus(false);
+        }
+        
+        // Reconnect after 3 seconds
+        setTimeout(initializeMultiDroneWebSocket, 3000);
+    };
+    
+    websocket.onerror = (error) => {
+        console.error("❌ WebSocket error:", error);
+        
+        // Update connection status
+        if (typeof updateConnectionStatus === 'function') {
+            updateConnectionStatus(false);
+        }
+    };
+};
+
+const handleServerMessage = (data) => {
+    switch (data.type) {
+        case "init":
+            // Server sent initial configuration
+            myRegion = data.region;
+            myHumans = data.humans;
+            worldSize = data.world_size;
+            console.log(`🎯 Assigned region:`, myRegion);
+            console.log(`👥 My humans:`, myHumans);
+            
+            // Initialize humans in my region
+            initializeMyHumans();
+            break;
+            
+        case "positions":
+            // Update other drone positions
+            otherDrones = data.drones;
+            updateOtherDronesDisplay();
+            break;
+            
+        case "humans_detected":
+            // Server found humans in my FOV
+            console.log("🎯 Humans detected:", data.humans);
+            handleHumansDetected(data.humans);
+            break;
+            
+        case "world_state":
+            // Admin received complete world state
+            if (clientType === "admin") {
+                updateAdminDisplay(data);
+            }
+            break;
+    }
+};
+
+const initializeMyHumans = () => {
+    // Clear existing humans
+    menPositions = [];
+    menObjects = [];
+    
+    // Add humans from my region
+    myHumans.forEach((human, index) => {
+        const pos = {
+            x: human.position[0],
+            z: human.position[2],
+            y: getTerrainHeightAt(human.position[0], human.position[2]) + 25,
+            loaded: false,
+            id: human.id,
+            name: human.name
+        };
+        menPositions.push(pos);
+        menObjects.push(null);
+    });
+    
+    console.log(`👥 Initialized ${menPositions.length} humans in my region`);
+    
+    // Spawn humans in the world after getting them from server
+    spawnMen();
+};
+
+const updateOtherDronesDisplay = () => {
+    // This will be implemented to show other drones on the map
+    // For now, just log the positions
+    Object.entries(otherDrones).forEach(([id, pos]) => {
+        if (id !== droneId) {
+            console.log(`🛰️ ${id} at [${pos[0].toFixed(1)}, ${pos[1].toFixed(1)}, ${pos[2].toFixed(1)}]`);
+        }
+    });
+};
+
+const handleHumansDetected = (humans) => {
+    humans.forEach(human => {
+        console.log(`🎯 Found human: ${human.name} at [${human.position[0]}, ${human.position[2]}]`);
+        // Change color of found human
+        const index = menPositions.findIndex(pos => pos.id === human.id);
+        if (index !== -1 && menObjects[index]) {
+            changeHumanColor(human.name);
+        }
+    });
+};
+
+const updateAdminDisplay = (worldState) => {
+    // Admin interface updates
+    console.log("👁️ Admin: Received world state update");
+    console.log("🛰️ Drones:", worldState.drones);
+    console.log("👥 Humans:", worldState.humans);
+};
+
+// Check if position is within assigned region
+const isWithinRegion = (position) => {
+    if (!myRegion) return true; // Allow movement if no region assigned
+    
+    const x = position.x;
+    const z = position.z;
+    
+    return (x >= myRegion.x_from && x <= myRegion.x_to && 
+            z >= myRegion.z_from && z <= myRegion.z_to);
+};
+
+// Enforce region boundaries
+const enforceRegionBoundary = () => {
+    if (!character || !myRegion) return;
+    
+    const pos = character.position;
+    let needsUpdate = false;
+    
+    // Check X boundaries
+    if (pos.x < myRegion.x_from) {
+        pos.x = myRegion.x_from;
+        needsUpdate = true;
+    } else if (pos.x > myRegion.x_to) {
+        pos.x = myRegion.x_to;
+        needsUpdate = true;
+    }
+    
+    // Check Z boundaries
+    if (pos.z < myRegion.z_from) {
+        pos.z = myRegion.z_from;
+        needsUpdate = true;
+    } else if (pos.z > myRegion.z_to) {
+        pos.z = myRegion.z_to;
+        needsUpdate = true;
+    }
+    
+    if (needsUpdate) {
+        console.log(`🚫 Drone ${droneId} hit region boundary, position corrected`);
+    }
+};
+
+// Modified position sending for multi-drone
+const sendMultiDronePosition = () => {
+    if (websocket && websocket.readyState === WebSocket.OPEN && character) {
+        // Enforce region boundaries before sending position
+        enforceRegionBoundary();
+        
+        const pos = [
+            character.position.x,
+            character.position.y,
+            character.position.z
+        ];
+        
+        websocket.send(JSON.stringify({
+            type: "pos",
+            drone_id: droneId,
+            pos: pos
+        }));
+    }
 };
 
 const sendWebSocketMessage = (status, modelType, targetName, latitude, longitude) => {
@@ -195,6 +560,19 @@ const loadManModel = async (position, index) => {
   }
 };
 
+// Removed collision avoidance - drones can now get close to humans
+
+// Generate random position within region (no collision avoidance)
+const generateSafeRandomPosition = () => {
+  if (!myRegion) return null;
+  
+  const x = Math.random() * (myRegion.x_to - myRegion.x_from) + myRegion.x_from;
+  const z = Math.random() * (myRegion.z_to - myRegion.z_from) + myRegion.z_from;
+  const y = getTerrainHeightAt(x, z) + 40; // Safe height above terrain
+  
+  return new THREE.Vector3(x, y, z);
+};
+
 
 // Modified position generation
 const generateInitialMenPositions = () => {
@@ -239,26 +617,43 @@ const findClosestMen = () => {
 
 // ✅ REPLACE the old spawnMen function with this new one
 const spawnMen = () => {
-  // Use the fixed locations directly instead of random generation
-  closestMenPositions = HUMAN_LOCATIONS.map(coords => {
-    const x = coords[0];
-    const z = coords[1];
+  // Check if we're in multi-drone mode
+  if (myHumans && myHumans.length > 0) {
+    // Multi-drone mode: use humans from server
+    console.log('✅ Multi-drone mode: Spawning humans from server assignment');
+    closestMenPositions = myHumans.map(human => {
+      const x = human.position[0];
+      const z = human.position[2];
+      const groundY = getTerrainHeightAt(x, z);
 
-    // Get a preliminary terrain height. The final, precise height
-    // will be calculated later in updateMenHeights(), just like before.
-    const groundY = getTerrainHeightAt(x, z);
+      return {
+        x,
+        z,
+        y: groundY + 25,
+        loaded: false,
+        id: human.id,
+        name: human.name
+      };
+    });
+  } else {
+    // Single drone mode: use the fixed locations
+    closestMenPositions = HUMAN_LOCATIONS.map(coords => {
+      const x = coords[0];
+      const z = coords[1];
+      const groundY = getTerrainHeightAt(x, z);
 
-    return {
-      x,
-      z,
-      y: groundY + 25, // Start high, will be corrected to ground level later
-      loaded: false
-    };
-  });
+      return {
+        x,
+        z,
+        y: groundY + 25,
+        loaded: false
+      };
+    });
+  }
 
-  console.log('✅ Spawning men at fixed predefined locations:');
+  console.log('✅ Spawning men:');
   closestMenPositions.forEach((pos, i) => {
-    console.log(`${i + 1}. X: ${pos.x.toFixed(1)}, Z: ${pos.z.toFixed(1)}`);
+    console.log(`${i + 1}. ${pos.name || 'Human'}: X: ${pos.x.toFixed(1)}, Z: ${pos.z.toFixed(1)}`);
   });
 };
 
@@ -364,27 +759,30 @@ const navigateToNextTarget = () => {
   const target = closestMenPositions[currentTargetIndex];
   moveToPosition(target);
 };
-// ✅ WebSocket Connection
+// ✅ WebSocket Connection (Legacy - only for single drone mode)
 const connectWebSocket = () => {
-    websocket = new WebSocket('ws://localhost:8765/');
+    // Only connect if we're not in multi-drone mode
+    if (DRONE_ID === 'D1' && SERVER_IP === 'localhost') {
+        websocket = new WebSocket('ws://localhost:8765/');
 
-    websocket.onopen = () => {
-        console.log("✅ WebSocket connected!");
-    };
+        websocket.onopen = () => {
+            console.log("✅ WebSocket connected!");
+        };
 
-    websocket.onerror = (error) => {
-        console.error("❌ WebSocket error:", error);
-    };
+        websocket.onerror = (error) => {
+            console.error("❌ WebSocket error:", error);
+        };
 
-    websocket.onclose = () => {
-        console.log("⚠️ WebSocket closed. Reconnecting...");
-        setTimeout(connectWebSocket, 3000);
-    };
+        websocket.onclose = () => {
+            console.log("⚠️ WebSocket closed. Reconnecting...");
+            setTimeout(connectWebSocket, 3000);
+        };
+    }
 };
 
 // ✅ Send WebSocket Message
 
-// ✅ Connect WebSocket on page load
+// ✅ Connect WebSocket on page load (only for single drone mode)
 connectWebSocket();
 
 
@@ -490,7 +888,7 @@ const setScene = async () => {
   await setClouds();
   await setCharacter();
   // await loadManModel();
-  spawnMen();
+  // spawnMen(); // Moved to after WebSocket connection
   await setGrass();
   await setTrees();
   setCam();
@@ -501,6 +899,20 @@ const setScene = async () => {
   listenTo();
   render();
   coordsDisplay = document.getElementById('coords-display');
+
+  // Initialize multi-drone WebSocket if parameters are present
+  if (DRONE_ID !== 'D1' || SERVER_IP !== 'localhost') {
+    console.log(`🚀 Initializing multi-drone mode for ${droneId}`);
+    initializeMultiDroneWebSocket();
+    
+    // Start position sending loop for multi-drone
+    setInterval(sendMultiDronePosition, 100);
+  } else {
+    // Single drone mode: spawn humans immediately
+    spawnMen();
+  }
+  
+  // Removed FOV visualization creation
 
 
   pauseIconAnimation();
@@ -1179,6 +1591,15 @@ const toggleBirdsEyeView = () => {
 
 const keyDown = (event) => {
   if (infoModalDisplayed) return;
+  
+  // Manual mode toggle with 'M' key
+  if (event.keyCode === 77 || event.code === 'KeyM' || event.key === 'm' || event.key === 'M') {
+    toggleManualMode();
+    return;
+  }
+  
+  // Removed FOV visualization toggle key
+  
   if (event.keyCode === 84 && !simulationStarted) { // 84 is the keyCode for 't'
     simulationStarted = true;
     document.getElementById('start-message').style.display = 'none';
@@ -1186,6 +1607,13 @@ const keyDown = (event) => {
     startAutomatedMovement();
     return; // Stop further processing for this key press
   }
+  
+  // Handle manual controls if in manual mode
+  if (isManualMode) {
+    handleKeyDown(event);
+    return;
+  }
+  
   if (!activeKeysPressed.includes(event.keyCode)) {
     activeKeysPressed.push(event.keyCode);
   }
@@ -1200,6 +1628,12 @@ const keyDown = (event) => {
 };
 
 const keyUp = (event) => {
+  // Handle manual controls if in manual mode
+  if (isManualMode) {
+    handleKeyUp(event);
+    return;
+  }
+  
   const index = activeKeysPressed.indexOf(event.keyCode);
   if (index !== -1) {
     activeKeysPressed.splice(index, 1);
@@ -1378,7 +1812,13 @@ const cleanUp = (obj) => {
 
 const render = () => {
   if(loadingDismissed) {
-    determineMovement();
+    // Handle manual movement if in manual mode
+    if (isManualMode) {
+      handleManualMovement();
+    } else {
+      determineMovement();
+    }
+    
     calcCharPos();
     if(flyingIn) animateClouds();
     if(mixer) mixer.update(clock.getDelta());
@@ -1388,6 +1828,8 @@ const render = () => {
       const { x, y, z } = character.position;
       coordsDisplay.innerHTML = `X: ${x.toFixed(1)}<br>Y: ${y.toFixed(1)}<br>Z: ${z.toFixed(1)}`;
     }
+    
+    // Removed FOV visualization update
   }
   renderer.render(scene, camera);
   requestAnimationFrame(render.bind(this));
@@ -1471,9 +1913,26 @@ function generateDummyWaypoints(humanPos, count = 4) {
   const waypoints = [];
   for (let i = 1; i <= count; i++) {
     const t = i / (count + 1);
-    // linear interp plus jitter
-    const x = THREE.MathUtils.lerp(start.x, humanPos.x, t) + (Math.random() - 0.5) * 10;
-    const z = THREE.MathUtils.lerp(start.z, humanPos.z, t) + (Math.random() - 0.5) * 10;
+    
+    // Use safe random position if in multi-drone mode
+    let x, z;
+    if (myRegion && generateSafeRandomPosition) {
+      // Generate safe position within region
+      const safePos = generateSafeRandomPosition();
+      if (safePos) {
+        x = safePos.x;
+        z = safePos.z;
+      } else {
+        // Fallback to original method
+        x = THREE.MathUtils.lerp(start.x, humanPos.x, t) + (Math.random() - 0.5) * 10;
+        z = THREE.MathUtils.lerp(start.z, humanPos.z, t) + (Math.random() - 0.5) * 10;
+      }
+    } else {
+      // Original method for single drone mode
+      x = THREE.MathUtils.lerp(start.x, humanPos.x, t) + (Math.random() - 0.5) * 10;
+      z = THREE.MathUtils.lerp(start.z, humanPos.z, t) + (Math.random() - 0.5) * 10;
+    }
+    
     const y = getTerrainHeightAt(x, z) + 1;
     waypoints.push(new THREE.Vector3(x, y, z));
   }
@@ -1498,12 +1957,30 @@ const generateFixedTargets = () => {
 
   // 1️⃣ GLOBAL “warm-up” dummies
   for (let i = 0; i < 3; i++) {
-    // pick a random spot in a fixed radius
-    const angle    = Math.random() * Math.PI * 2;
-    const radius   = 150 + Math.random() * 100;
-    const x        = Math.cos(angle) * radius;
-    const z        = Math.sin(angle) * radius;
-    const y        = getTerrainHeightAt(x, z) + 1;
+    let x, z;
+    
+    // Use safe random position if in multi-drone mode
+    if (myRegion && generateSafeRandomPosition) {
+      const safePos = generateSafeRandomPosition();
+      if (safePos) {
+        x = safePos.x;
+        z = safePos.z;
+      } else {
+        // Fallback to original method
+        const angle = Math.random() * Math.PI * 2;
+        const radius = 150 + Math.random() * 100;
+        x = Math.cos(angle) * radius;
+        z = Math.sin(angle) * radius;
+      }
+    } else {
+      // Original method for single drone mode
+      const angle = Math.random() * Math.PI * 2;
+      const radius = 150 + Math.random() * 100;
+      x = Math.cos(angle) * radius;
+      z = Math.sin(angle) * radius;
+    }
+    
+    const y = getTerrainHeightAt(x, z) + 1;
 
     // choose any dummy name
     const dummyName = ["Dave","Eve","Frank"][i % 3];
@@ -1564,6 +2041,11 @@ const moveToNextTarget = () => {
   // 🚀 Move drone towards target (Only X and Z)
   character.position.x += direction.x * movementSpeed;
   character.position.z += direction.z * movementSpeed;
+  
+  // Enforce region boundaries after movement
+  if (myRegion) {
+    enforceRegionBoundary();
+  }
 
   // 🔄 Rotate smoothly towards target
   let targetRotation = Math.atan2(direction.x, direction.z);
