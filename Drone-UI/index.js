@@ -263,32 +263,42 @@ const spawnMen = () => {
 };
 
 
-// New function to check if a position is within any active terrain tile
-const isPositionInActiveTerrain = (position) => {
-  for (const tile of terrainTiles) {
-    const tileCoords = JSON.parse(tile.name);
-    const xInRange = position.x >= tileCoords.x && position.x <= (tileCoords.x + tileWidth);
-    const zInRange = position.z >= tileCoords.y && position.z <= (tileCoords.y + tileWidth);
-    if (xInRange && zInRange) {
-      return true;
-    }
+const getGroundYAt = (x, z) => {
+  // Create a ray that starts high above the point and points straight down
+  const rayOrigin = new THREE.Vector3(x, 100, z); // Start from y=100
+  const rayDirection = new THREE.Vector3(0, -1, 0);
+  raycaster.set(rayOrigin, rayDirection);
+
+  // Check for intersections with all terrain tile meshes
+  const intersects = raycaster.intersectObjects(terrainTiles.map(el => el.hex));
+
+  if (intersects.length > 0) {
+    // If we hit something, return the Y-coordinate of the first intersection point
+    return intersects[0].point.y;
   }
-  return false;
+
+  // If we hit nothing (terrain not loaded yet), return null
+  return null;
 };
 
 const updateMenHeights = () => {
   closestMenPositions.forEach((pos, index) => {
+    // Stop if this man's model has already been loaded
     if (!pos || pos.loaded) return;
 
-    try {
-      const terrainPosition = new THREE.Vector3(pos.x, 0, pos.z);
-      if (isPositionInActiveTerrain(terrainPosition)) {
-        pos.y = getTerrainHeightAt(pos.x, pos.z) + 1;
-        loadManModel(new THREE.Vector3(pos.x, pos.y, pos.z), index);
-        pos.loaded = true;
-      }
-    } catch (error) {
-      console.error('Error updating man height:', error);
+    // Use our new reliable function to check for ground
+    const groundY = getGroundYAt(pos.x, pos.z);
+
+    // If groundY is not null, it means the terrain has loaded at this spot
+    if (groundY !== null) {
+      // Update the position data with the correct height + a small offset
+      pos.y = groundY + 0.5; // Place him 0.5 units above the ground
+
+      // Now, load the 3D model at the final, correct position
+      loadManModel(new THREE.Vector3(pos.x, pos.y, pos.z), index);
+      
+      // Mark this position as loaded so we don't do this again
+      pos.loaded = true;
     }
   });
 };
@@ -1470,6 +1480,17 @@ function generateDummyWaypoints(humanPos, count = 4) {
   return waypoints;
 }
 const generateFixedTargets = () => {
+
+  closestMenPositions.forEach(pos => {
+    // If the man hasn't been loaded yet, his Y-value might still be the high, floating one.
+    // We correct it here one last time to prevent a race condition.
+    if (!pos.loaded) {
+      const groundY = getGroundYAt(pos.x, pos.z);
+      if (groundY !== null) {
+        pos.y = groundY + 0.5; // Correct it right before use!
+      }
+    }
+  });
   // findClosestMen();  // pick your 3 real humans
 
   allTargets   = [];
