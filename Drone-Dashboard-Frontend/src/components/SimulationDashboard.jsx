@@ -1,63 +1,62 @@
 import React, { useEffect, useState } from "react";
-import { Maximize2, Monitor, Camera } from "lucide-react";
+import { Maximize2, Monitor, Camera, Thermometer, Volume2 } from "lucide-react";
 
 const SERVER_WS_URL = "ws://localhost:8765";
-const SIMULATION_URL = "http://127.0.0.1:5500/Autonomous-Search-and-Rescue-Drone/Drone-UI/index.html";
+const SIMULATION_URL = "http://127.0.0.1:5500";
 
-const DEFAULT_IMAGE = "/test_data/thermal/no_human/FLIR_04123_jpeg_jpg.rf.fa8691c9bfaccaa604ff9cbb7f1af48c.jpg";
+const DEFAULT_THERMAL = "/test_data/thermal/no_human/FLIR_04123_jpeg_jpg.rf.fa8691c9bfaccaa604ff9cbb7f1af48c.jpg";
+const DEFAULT_IMAGE = "/test_data/image/no_human/Screenshot (381).png";
 
-const SimulationDashboard = () => {
+export default function SimulationDashboard() {
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingSim, setIsLoadingSim] = useState(true);
   const [ws, setWs] = useState(null);
-  const [detectedImage, setDetectedImage] = useState(null);
-  const [isDetecting, setIsDetecting] = useState(false);
+
+  const [thermalSrc, setThermalSrc] = useState(null);
+  const [imageSrc, setImageSrc] = useState(null);
+  const [audioStatus, setAudioStatus] = useState("No Human");
 
   useEffect(() => {
     const socket = new WebSocket(SERVER_WS_URL);
 
     socket.onopen = () => {
-      console.log("✅ Connected to WebSocket Server");
+      console.log("✅ Connected to WebSocket");
+      socket.send(JSON.stringify({ ping: true }));
     };
 
-    socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log("📩 Received:", data);
 
-      if (data.type === "thermal") {
-        setDetectedImage(data.image);
-        setIsDetecting(false);
-        
-        // Clear detection after 4 seconds
-        setTimeout(() => {
-          setDetectedImage(null);
-        }, 4000);
-      } else if (data.type === "audio") {
-        alert(`Audio Detection Result: ${data.result}`);
-      }
+
+    socket.onmessage = (evt) => {
+      const { image, thermal, audio } = JSON.parse(evt.data);
+      console.log("📩 Inference response", { image, thermal, audio });
+
+      if (thermal)  setThermalSrc(`data:image/png;base64,${thermal}`);
+      if (image)    setImageSrc(`data:image/png;base64,${image}`);
+      if (audio)    setAudioStatus(audio);
+
+      setTimeout(() => {
+        setThermalSrc(null);
+        setImageSrc(null);
+        setAudioStatus("No Human");
+      }, 5000);
     };
 
-    socket.onerror = (error) => console.error("❌ WebSocket Error:", error);
-    socket.onclose = () => console.log("🔌 WebSocket Disconnected");
+    socket.onerror = (err) => console.error("❌ WS Error", err);
+    socket.onclose = () => console.log("🔌 WS Closed");
 
     setWs(socket);
     return () => socket.close();
   }, []);
 
-  const sendDetectionRequest = () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ model: "thermal" }));
-      console.log("📤 Sent detection request for thermal");
-      setIsDetecting(true);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gray-900 p-6 text-gray-100">
       <div className="max-w-7xl mx-auto space-y-6">
-        <div className={`bg-gray-800 rounded-lg border border-gray-700 shadow-xl 
-          ${isFullscreen ? "fixed inset-0 z-50" : ""} 
-          transition-all duration-300 hover:border-blue-500`}
+
+        {/* Simulation Panel */}
+        <div
+          className={`bg-gray-800 rounded-lg border border-gray-700 shadow-xl ${
+            isFullscreen ? "fixed inset-0 z-50" : ""
+          } transition-all duration-300 hover:border-blue-500`}
         >
           <div className="flex items-center justify-between p-4 border-b border-gray-700 bg-gray-800/50 backdrop-blur">
             <div className="flex items-center gap-2">
@@ -71,62 +70,73 @@ const SimulationDashboard = () => {
               <Maximize2 className="h-5 w-5" />
             </button>
           </div>
-          <div className="p-4">
-            {isLoading && (
+          <div className="p-4 relative">
+            {isLoadingSim && (
               <div className="absolute inset-0 flex items-center justify-center bg-gray-800/80">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400"></div>
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400" />
               </div>
             )}
             <iframe
               src={SIMULATION_URL}
-              className={`w-full bg-black rounded-lg ${isFullscreen ? "h-[calc(100vh-120px)]" : "h-[60vh]"} transition-all duration-300`}
-              title="Simulation Screen"
-              onLoad={() => setIsLoading(false)}
+              className={`w-full bg-black rounded-lg ${
+                isFullscreen ? "h-[calc(100vh-120px)]" : "h-[60vh]"
+              } transition-all duration-300`}
+              title="Simulation"
+              onLoad={() => setIsLoadingSim(false)}
             />
           </div>
         </div>
 
-        <div className="bg-gray-800 rounded-lg border border-gray-700 shadow-xl transition-all duration-300 hover:border-blue-500">
-          <div className="p-4 border-b border-gray-700">
-            <div className="flex items-center gap-2">
+        {/* Detection Panels */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+          {/* Image Detection */}
+          <div className="bg-gray-800 rounded-lg border border-gray-700 shadow-xl hover:border-blue-500 transition-all duration-300">
+            <div className="flex items-center gap-2 p-4 border-b border-gray-700">
               <Camera className="h-5 w-5 text-blue-400" />
-              <h2 className="text-xl font-semibold">Box</h2>
+              <h2 className="text-xl font-semibold">Image Detection</h2>
             </div>
-          </div>
-          <div className="p-4">
-            <div className="relative">
-              <div className="absolute top-2 right-2 z-10">
-                <button
-                  className={`px-3 py-1 rounded text-sm ${
-                    isDetecting ? "bg-blue-500 text-white" : "bg-gray-700 text-white hover:bg-blue-500"
-                  }`}
-                  onClick={sendDetectionRequest}
-                  disabled={isDetecting}
-                >
-                  {isDetecting ? "Detecting..." : "Detect"}
-                </button>
-              </div>
-              <div className="aspect-video rounded-lg border border-gray-700 overflow-hidden transition-all duration-300 hover:border-blue-500">
-                {detectedImage ? (
-                  <img
-                    src={`data:image/png;base64,${detectedImage}`}
-                    alt="Thermal detection"
-                    className="w-full h-full object-cover rounded-lg transition-all duration-500 hover:scale-110"
-                  />
-                ) : (
-                  <img
-                    src={DEFAULT_IMAGE}
-                    alt="Default"
-                    className="w-full h-full object-cover rounded-lg opacity-50"
-                  />
-                )}
+            <div className="p-4">
+              <div className="aspect-video rounded-lg border border-gray-700 overflow-hidden">
+                <img
+                  src={imageSrc || DEFAULT_IMAGE}
+                  alt="Image Detection"
+                  className="w-full h-full object-cover rounded-lg opacity-75"
+                />
               </div>
             </div>
           </div>
+
+          {/* Thermal Detection */}
+          <div className="bg-gray-800 rounded-lg border border-gray-700 shadow-xl hover:border-blue-500 transition-all duration-300">
+            <div className="flex items-center gap-2 p-4 border-b border-gray-700">
+              <Thermometer className="h-5 w-5 text-blue-400" />
+              <h2 className="text-xl font-semibold">Thermal Detection</h2>
+            </div>
+            <div className="p-4">
+              <div className="aspect-video rounded-lg border border-gray-700 overflow-hidden">
+                <img
+                  src={thermalSrc || DEFAULT_THERMAL}
+                  alt="Thermal Detection"
+                  className="w-full h-full object-cover rounded-lg opacity-75"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Audio Detection */}
+          <div className="bg-gray-800 rounded-lg border border-gray-700 shadow-xl hover:border-blue-500 transition-all duration-300">
+            <div className="flex items-center gap-2 p-4 border-b border-gray-700">
+              <Volume2 className="h-5 w-5 text-blue-400" />
+              <h2 className="text-xl font-semibold">Audio Detection</h2>
+            </div>
+            <div className="p-4 text-center text-2xl font-medium">
+              {audioStatus}
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
   );
-};
-
-export default SimulationDashboard;
+}

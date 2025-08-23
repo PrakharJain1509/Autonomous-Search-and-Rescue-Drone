@@ -34,7 +34,7 @@ import numpy as np
 email_config = {
     'sender_email': 'abhisheksaraff18@gmail.com',
     'sender_password': 'wwtx zfew vgzq odzx',  # For Gmail, use App Password
-    'recipient_email': 'abhisheksaraff.cy22@rvce.edu.in',
+    'recipient_email': 'prakharjain.cd22@rvce.edu.in',
     'smtp_server': 'smtp.gmail.com',
     'smtp_port': 587,
     'use_tls': True,

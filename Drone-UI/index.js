@@ -13,15 +13,18 @@ let allTargets = [];
 let targetStatus = []; // Stores human detection status for each target
 let currentTargetIndex = 0;
 let isMoving = false;
-let movementSpeed = 0.25;  
-let rotationSpeed = 0.003; 
-let lastSentIndex = -1;  
+let movementSpeed = 0.3;
+let rotationSpeed = 0.003;
+let lastSentIndex = -1;
 let menNeedingHeightUpdate = [];
 
 // Add these variables
 let closestMenPositions = [];
-let menObjects = new Array(3).fill(null);
+let menObjects = new Array(5).fill(null);
 
+// right next to your model types:
+const humanModelTypes = ["image", "thermal", "audio"];
+const humanNames      = ["Alice", "Bob", "Charlie"];
 
 
 // Add these variables to the existing declarations
@@ -35,14 +38,114 @@ const getTerrainHeightAt = (x, z) => {
   return Math.max(height, sandHeight);
 };
 
-const sendWebSocketMessage = (status, modelType) => {
+const sendWebSocketMessage = (status, modelType, targetName, latitude, longitude) => {
   if (websocket.readyState === WebSocket.OPEN) {
-      const message = `${status},${modelType}`;
-      console.log(`📡 Sending WebSocket message: ${message}`);
-      websocket.send(message);
+    const payload = { status, modelType, name: targetName };
+    console.log("📡 Sending WS:", payload);
+    websocket.send(JSON.stringify(payload));
+
+    if (status === "Human Detected") {
+      changeHumanColor(targetName);
+
+      const emailSubject = "SOS Alert: Human Found at Coordinates";
+      const emailBody = `
+       <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOS Alert: Human Found at Coordinates</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .header {
+            background-color: #ff0000;
+            color: #ffffff;
+            padding: 20px;
+            text-align: center;
+        }
+        .content {
+            padding: 20px;
+            color: #333333;
+        }
+        .button {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007BFF;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        .footer {
+            background-color: #f1f1f1;
+            padding: 10px;
+            text-align: center;
+            font-size: 12px;
+            color: #666666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>SOS Alert: Human Found at Coordinates</h2>
+        </div>
+        <div class="content">
+            <p>Dear [Recipient's Name],</p>
+            <p>We have found a human in need of immediate assistance at the following coordinates:</p>
+            <p><strong>Latitude:</strong> {{latitude}}</p>
+            <p><strong>Longitude:</strong> {{longitude}}</p>
+            <p>Please send help as soon as possible. You can view the location on Google Maps by clicking the button below:</p>
+            <p><a href="https://www.google.com/maps?q={{latitude}},{{longitude}}" class="button">View Location on Google Maps</a></p>
+            <p>Thank you for your prompt attention to this urgent matter.</p>
+            <p>Best regards,</p>
+            <p>[Your Name]</p>
+            <p>[Your Contact Information]</p>
+        </div>
+        <div class="footer">
+            <p>This is an automated message. Please do not reply to this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+`;
+
+      sendEmail('rohithbiradar2004@gmail.com', emailSubject, latitude, longitude)
+        .then(success => {
+          if (!success) {
+            console.warn("⚠️ Email notification could not be sent");
+          }
+        });
+    }
   } else {
-      console.warn("⚠️ WebSocket not ready. Retrying...");
-      setTimeout(() => sendWebSocketMessage(status, modelType), 1000);
+    console.warn("⚠️ WS not ready. Retrying…");
+    setTimeout(() => sendWebSocketMessage(status, modelType, targetName, latitude, longitude), 1000);
+  }
+};
+const changeHumanColor = (targetName) => {
+  // Find the index of the human model by name
+  const index = humanNames.indexOf(targetName);
+  if (index !== -1 && menObjects[index]) {
+    // Traverse the model and change the color of all meshes to yellow
+    menObjects[index].traverse(child => {
+      if (child.isMesh) {
+        child.material.color.set(0xFFFFFF); // Yellow color
+      }
+    });
+    console.log(`🎨 Changed color of ${targetName} to black.`);
   }
 };
 
@@ -60,7 +163,7 @@ const loadManModel = async (position, index) => {
         // Ensure correct scaling
         child.geometry.computeBoundingBox();
         const size = child.geometry.boundingBox.getSize(new THREE.Vector3());
-        const scaleFactor = 1 / 6; // Adjust as needed
+        const scaleFactor = 2 / 6; // Adjust as needed
         child.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
         // Apply red color to material
@@ -74,7 +177,7 @@ const loadManModel = async (position, index) => {
 
     // Apply scaling to the whole model
     // model.scale.set(1/6, 1/6, 1/6);
-    
+
     model.position.copy(position);
     scene.add(model);
     menObjects[index] = model;
@@ -89,20 +192,20 @@ const loadManModel = async (position, index) => {
 // Modified position generation
 const generateInitialMenPositions = () => {
   const positions = [];
-  for(let i = 0; i < 10; i++) {
-    const angle = Math.random() * Math.PI * 2;
+  for (let i = 0; i < 10; i++) {
+    const angle    = Math.random() * Math.PI * 2;
     const distance = 100 + Math.random() * 200;
-    const pos = {
-      x: Math.cos(angle) * distance,
-      z: Math.sin(angle) * distance,
-      y: 35,
+    const x        = Math.cos(angle) * distance;
+    const z        = Math.abs(Math.sin(angle) * distance);
+    // sample the terrain height and then add +25
+
+    const groundY  = getTerrainHeightAt(x, z);
+    positions.push({
+      x,
+      z,
+      y: groundY + 25,
       loaded: false
-    };
-    
-    // Validate position coordinates
-    if (typeof pos.x === 'number' && typeof pos.z === 'number') {
-      positions.push(pos);
-    }
+    });
   }
   return positions;
 };
@@ -110,13 +213,13 @@ const generateInitialMenPositions = () => {
 // Find closest 3 based on X/Z only
 const findClosestMen = () => {
   const charPos = new THREE.Vector3(0, 0, 0);
-  
+
   closestMenPositions = menPositions
     .filter(pos => pos && !isNaN(pos.x) && !isNaN(pos.z))
     .map(pos => ({
       ...pos,
       distance: Math.sqrt(
-        Math.pow(pos.x - charPos.x, 2) + 
+        Math.pow(pos.x - charPos.x, 2) +
         Math.pow(pos.z - charPos.z, 2)
       )
     }))
@@ -130,7 +233,7 @@ const findClosestMen = () => {
 const spawnMen = () => {
   menPositions = generateInitialMenPositions();
   findClosestMen();
-  
+
   console.log('Closest men (X/Z only):');
   closestMenPositions.forEach((pos, i) => {
     console.log(`${i + 1}. X: ${pos.x.toFixed(1)}, Z: ${pos.z.toFixed(1)}`);
@@ -154,7 +257,7 @@ const isPositionInActiveTerrain = (position) => {
 const updateMenHeights = () => {
   closestMenPositions.forEach((pos, index) => {
     if (!pos || pos.loaded) return;
-    
+
     try {
       const terrainPosition = new THREE.Vector3(pos.x, 0, pos.z);
       if (isPositionInActiveTerrain(terrainPosition)) {
@@ -213,7 +316,7 @@ const moveToPosition = (target) => {
 // Function to navigate to closest men
 const navigateToClosestMen = () => {
   if (closestMenPositions.length === 0) return;
-  
+
   isNavigating = true;
   currentTargetIndex = 0;
   navigateToNextTarget();
@@ -328,7 +431,7 @@ const setScene = async () => {
   camZ      = -190;
   camera    = new THREE.PerspectiveCamera(60, sizes.width / sizes.height, 1, 300);
   camera.position.set(0, camY, camZ);
-  
+
   renderer = new THREE.WebGLRenderer({
     canvas:     canvas,
     antialias:  false
@@ -341,7 +444,7 @@ const setScene = async () => {
   scene.add(new THREE.HemisphereLight(0xffffbb, 0x080820, 0.5));
 
   gltfLoader = new GLTFLoader();
-  
+
   activeKeysPressed   = [];
   muteBgMusic         = true;
   infoModalDisplayed  = false;
@@ -352,7 +455,7 @@ const setScene = async () => {
   setTerrainValues();
   await setClouds();
   await setCharacter();
-  await loadManModel();
+  // await loadManModel();
   spawnMen();
   await setGrass();
   await setTrees();
@@ -444,7 +547,7 @@ const setFog = () => {
     ${FOG_APPLIED_LINE}`
   );
 
-  const near = 
+  const near =
     gpuTier.tier === 1
       ? 70
       : gpuTier.tier === 2
@@ -452,7 +555,7 @@ const setFog = () => {
       : gpuTier.tier === 3
       ? 70
       : 70
-  const far = 
+  const far =
     gpuTier.tier === 1
       ? 90
       : gpuTier.tier === 2
@@ -480,7 +583,7 @@ const setRaycast = () => {
 
 const setTerrainValues = () => {
 
-  const centerTileFromTo = 
+  const centerTileFromTo =
     gpuTier.tier === 1
       ? 20
       : gpuTier.tier === 2
@@ -497,7 +600,7 @@ const setTerrainValues = () => {
   };
   tileWidth             = centerTileFromTo * 2; // diff between xFrom - xTo (not accounting for 0)
   amountOfHexInTile     = Math.pow((centerTile.xTo + 1) - centerTile.xFrom, 2); // +1 accounts for 0
-  simplex               = new SimplexNoise();
+  simplex               = new SimplexNoise("prakhar");
   maxHeight             = 30;
   snowHeight            = maxHeight * 0.9;
   lightSnowHeight       = maxHeight * 0.8;
@@ -522,7 +625,7 @@ const setTerrainValues = () => {
     deepWater:    new THREE.Color(0x015373)
   };
   terrainTiles      = [];
-  
+
 }
 
 const setClouds = async () => {
@@ -531,13 +634,13 @@ const setClouds = async () => {
   const amountOfClouds  = 10;
 
   const createClouds = async () => {
-    
+
     const cloudModels     = [];
     const cloudModelPaths = [
       'assets/clouds/cloud-one/scene.gltf',
       'assets/clouds/cloud-two/scene.gltf'
     ];
-  
+
     for(let i = 0; i < cloudModelPaths.length; i++)
       cloudModels[i] = await gltfLoader.loadAsync(cloudModelPaths[i]);
 
@@ -569,7 +672,7 @@ const setClouds = async () => {
     cloud.name = `cloud-${i}`;
     cloud.position.set(
       getRandom(-20, 20),
-      getRandom(camY - 90, camY - 110), 
+      getRandom(camY - 90, camY - 110),
       getRandom(camZ + 200, camZ + 320)
     );
 
@@ -585,9 +688,9 @@ const setClouds = async () => {
 const animateClouds = () => {
 
   for(let i = 0; i < clouds.length; i++)
-    clouds[i].position.x = 
-    clouds[i].position.x < 0 
-      ? clouds[i].position.x - (clock.getElapsedTime() * 0.04) 
+    clouds[i].position.x =
+    clouds[i].position.x < 0
+      ? clouds[i].position.x - (clock.getElapsedTime() * 0.04)
       : clouds[i].position.x + (clock.getElapsedTime() * 0.04);
 
 }
@@ -608,7 +711,7 @@ const cleanUpClouds = () => {
 
 const setCharAnimation = () => {
 
-  const 
+  const
   min = 3,
   max = 14;
 
@@ -616,24 +719,24 @@ const setCharAnimation = () => {
 
   const interval = () => {
 
-    if(!gliding) 
+    if(!gliding)
       charAnimation
         .reset()
         .setEffectiveTimeScale(doubleSpeed ? 2 : 1)
         .setEffectiveWeight(1)
         .setLoop(THREE.LoopRepeat)
         .fadeIn(1)
-        .play(); 
+        .play();
     else charAnimation.fadeOut(2);
     gliding = !gliding;
 
     const randomTime      = Math.floor(Math.random() * (max - min + 1) + min);
     charAnimationTimeout  = setTimeout(interval, randomTime * 1000);
-    
+
   }
 
   interval();
-  
+
 }
 
 const setCharacter = async () => {
@@ -775,6 +878,35 @@ const tileYNegative = () => {
 
 }
 
+emailjs.init('RSRW9vSDMuUhuvsBC');
+
+// Modified sendEmail function using EmailJS
+const sendEmail = async (to, subject, latitude, longitude) => {
+  try {
+    console.log('📧 Attempting to send email to ${to} with subject: ${subject}');
+
+    // Define the template parameters
+    const templateParams = {
+      to_email: to,
+      latitude: latitude,
+      longitude: longitude,
+    };
+
+    // Send the email using EmailJS
+    const response = await emailjs.send('service_nypllv7', 'template_c7sts0c', templateParams);
+
+    if (response.status === 200) {
+      console.log('✅ Email sent successfully', response);
+      return true;
+    } else {
+      console.error('❌ Failed to send email:', response);
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Exception while sending email:', error);
+    return false;
+  }
+};
 const tileYPositive = () => {
 
   centerTile.yFrom += tileWidth;
@@ -819,7 +951,7 @@ const createTile = () => {
 
     mesh.castShadow     = true;
     mesh.receiveShadow  = true;
-  
+
     return mesh;
 
   }
@@ -856,13 +988,13 @@ const createTile = () => {
       treeTwo.clone(),
     ]
   });
-  
+
   let hexCounter      = 0;
   let grassOneCounter = 0;
   let grassTwoCounter = 0;
   let treeOneCounter  = 0;
   let treeTwoCounter  = 0;
-  
+
   for(let i = centerTile.xFrom; i <= centerTile.xTo; i++) {
     for(let j = centerTile.yFrom; j <= centerTile.yTo; j++) {
 
@@ -1014,7 +1146,7 @@ const keyDown = (event) => {
   if (!activeKeysPressed.includes(event.keyCode)) {
     activeKeysPressed.push(event.keyCode);
   }
-  
+
   if (event.keyCode === 71 && !isNavigating) { // 'G' key
     if (menNeedingHeightUpdate.length === 0) { // Only allow if all heights are set
       navigateToClosestMen();
@@ -1038,7 +1170,7 @@ const determineMovement = () => {
 
   // W and S for forward and backward movement
   if (activeKeysPressed.includes(87)) { // W key
-    character.translateZ(0.4); 
+    character.translateZ(0.4);
   }
   if (activeKeysPressed.includes(83)) { // S key
     character.translateZ(-0.4);
@@ -1050,7 +1182,7 @@ const determineMovement = () => {
       character.position.y += charPosYIncrement;
       if (charPosYIncrement < 0.3) charPosYIncrement += 0.02;
     }
-  } 
+  }
 
   // Down arrow for moving down, ensuring no collision
   if (activeKeysPressed.includes(40)) { // Down arrow
@@ -1092,7 +1224,7 @@ const camUpdate = () => {
     idealOffset.add(character.position);
     return idealOffset;
   }
-  
+
   const calcIdealLookat = () => {
     const idealLookat = thirdPerson ? new THREE.Vector3(0, -1.2, lookAtPosZ) : new THREE.Vector3(0, 0.5, lookAtPosZ + 5);
     idealLookat.applyQuaternion(character.quaternion);
@@ -1106,7 +1238,7 @@ const camUpdate = () => {
   }
 
   const idealOffset = calcIdealOffset();
-  const idealLookat = calcIdealLookat(); 
+  const idealLookat = calcIdealLookat();
 
   currentPos.copy(idealOffset);
   currentLookAt.copy(idealLookat);
@@ -1128,11 +1260,11 @@ const camUpdate = () => {
 const calcCharPos = () => {
   raycaster.set(character.position, new THREE.Vector3(0, -1, -0.1));
   const intersects = raycaster.intersectObjects(terrainTiles.map(el => el.hex));
-  
+
   if(activeTile !== intersects[0].object.name) {
     createSurroundingTiles(intersects[0].object.name);
   }
-  
+
   if (intersects[0].distance < distance) {
     movingCharDueToDistance = true;
     character.position.y += doubleSpeed ? 0.3 : 0.1;
@@ -1145,7 +1277,7 @@ const calcCharPos = () => {
       }, 600);
     }
   }
-  
+
   camUpdate();
   // Removed updateClosestMenDisplay() call since we only want initial positions
 }
@@ -1207,7 +1339,7 @@ const render = () => {
     calcCharPos();
     if(flyingIn) animateClouds();
     if(mixer) mixer.update(clock.getDelta());
-    
+
     updateMenHeights(); // Check for height updates
   }
   renderer.render(scene, camera);
@@ -1228,12 +1360,12 @@ const playMusic = () => {
 }
 
 const updateMusicVolume = () => {
-  
+
   muteBgMusic = !muteBgMusic;
   bgMusic.volume(muteBgMusic ? 0 : 0.01);
 
-  document.getElementById('sound').src = 
-    muteBgMusic ? 
+  document.getElementById('sound').src =
+    muteBgMusic ?
     'assets/icons/sound-off.svg' :
     'assets/icons/sound-on.svg'
 
@@ -1287,40 +1419,85 @@ const pauseIconAnimation = (pause = true) => {
 //     })
 
 // }
-
+function generateDummyWaypoints(humanPos, count = 4) {
+  const start = character.position.clone();
+  const waypoints = [];
+  for (let i = 1; i <= count; i++) {
+    const t = i / (count + 1);
+    // linear interp plus jitter
+    const x = THREE.MathUtils.lerp(start.x, humanPos.x, t) + (Math.random() - 0.5) * 10;
+    const z = THREE.MathUtils.lerp(start.z, humanPos.z, t) + (Math.random() - 0.5) * 10;
+    const y = getTerrainHeightAt(x, z) + 1;
+    waypoints.push(new THREE.Vector3(x, y, z));
+  }
+  return waypoints;
+}
 const generateFixedTargets = () => {
-  findClosestMen();  // Ensure closest 3 men are identified
+  findClosestMen();  // pick your 3 real humans
 
-  if (closestMenPositions.length < 3) {
-      console.error("Not enough men detected for human detection points!");
-      return;
+  allTargets   = [];
+  targetStatus = [];
+
+  // 1️⃣ GLOBAL “warm-up” dummies
+  for (let i = 0; i < 3; i++) {
+    // pick a random spot in a fixed radius
+    const angle    = Math.random() * Math.PI * 2;
+    const radius   = 150 + Math.random() * 100;
+    const x        = Math.cos(angle) * radius;
+    const z        = Math.sin(angle) * radius;
+    const y        = getTerrainHeightAt(x, z) + 1;
+
+    // choose any dummy name
+    const dummyName = ["Dave","Eve","Frank"][i % 3];
+
+    allTargets.push(new THREE.Vector3(x, y, z));
+    targetStatus.push({
+      detected:  false,
+      modelType: humanModelTypes[i % humanModelTypes.length],
+      name:      dummyName
+    });
   }
 
-  allTargets = closestMenPositions.map(pos => new THREE.Vector3(pos.x, pos.y, pos.z));
+  // …then your per-human dummies + real sequence…
+  closestMenPositions.forEach((pos, idx) => {
+    const humanPos = new THREE.Vector3(pos.x, pos.y, pos.z);
 
-  // Assign Image, Thermal, and Audio detection to the three closest men
-  const humanModelTypes = ["image", "thermal", "audio"];
+    // per-human dummies
+    const dummies = generateDummyWaypoints(humanPos, 4);
+    dummies.forEach(waypoint => {
+      const otherNames = humanNames.filter((_, i) => i !== idx);
+      const dummyName  = otherNames[Math.floor(Math.random() * otherNames.length)];
 
-  targetStatus = allTargets.map((target, index) => ({
-      detected: true,
-      modelType: humanModelTypes[index]
-  }));
+      allTargets.push(waypoint);
+      targetStatus.push({
+        detected:  false,
+        modelType: humanModelTypes[idx],
+        name:      dummyName
+      });
+    });
 
-  console.log("🎯 Human Detection Points Updated:", allTargets);
-  console.log("🔍 Target Detection Status Updated:", targetStatus);
+    // the real human
+    allTargets.push(humanPos);
+    targetStatus.push({
+      detected:  true,
+      modelType: humanModelTypes[idx],
+      name:      humanNames[idx]
+    });
+  });
 };
+
 
 
 
 // ✅ Move drone from one target to another
 const moveToNextTarget = () => {
-  if (currentTargetIndex >= closestMenPositions.length) {
+  if (currentTargetIndex >= allTargets.length) {
     console.log("✅ All closest men visited! Stopping movement.");
     isMoving = false;
     return;
   }
 
-  let target = closestMenPositions[currentTargetIndex];
+  let target = allTargets[currentTargetIndex];
 
   // Calculate direction but ignore Y-axis
   let direction = new THREE.Vector3(target.x - character.position.x, 0, target.z - character.position.z);
@@ -1354,17 +1531,62 @@ const moveToNextTarget = () => {
   let dz = Math.abs(character.position.z - target.z);
   let distance = Math.sqrt(dx * dx + dz * dz); // Ignore Y-axis
 
-  if (distance < 3) {  // Only check X and Z distance
-    if (lastSentIndex !== currentTargetIndex) {
-      let { detected, modelType } = targetStatus[currentTargetIndex];
-      let message = detected ? "Human Detected" : "No human detected";
-      sendWebSocketMessage(message, modelType);
-      console.log(`📍 Reached Target ${currentTargetIndex + 1}: ${message}, ${modelType}`);
+  if (distance < 3) {
+  // …send JSON WS…
+  const { detected, modelType, name } = targetStatus[currentTargetIndex];
+  const message = detected ? "Human Detected" : "No human detected";
+  sendWebSocketMessage(message, modelType, name);
+  lastSentIndex = currentTargetIndex;
 
-      lastSentIndex = currentTargetIndex;
-    }
-    currentTargetIndex++;
-  }
+  if (detected) {
+  isMoving = false;
+
+  // how far above the ground you want to end up
+  const hoverHeight   = target.y + 2;
+  // your normal safe cruise height
+  const cruiseHeight  = hoverHeight + 10;
+  // back-off distance
+  const backDistance  = 25;
+  const backVec       = direction.clone().negate().multiplyScalar(backDistance);
+
+  gsap.timeline()
+    // 1) slide back horizontally over 1s
+    .to(character.position, {
+      duration: 1,
+      x: `+=${backVec.x}`,
+      z: `+=${backVec.z}`,
+      ease: "power1.inOut"
+    })
+    // 2) then descend slowly over 1.2s
+    .to(character.position, {
+      duration: 1.2,
+      y: hoverHeight,
+      ease: "power1.out"
+    })
+    // 3) hold in place for 3s so you can really see them
+    .to({}, { duration: 3 })
+    // 4) ascend back up over 1.2s to cruise height
+    .to(character.position, {
+      duration: 1.2,
+      y: cruiseHeight,
+      ease: "power1.in"
+    })
+    // 5) when complete, move on to the next target
+    .call(() => {
+      currentTargetIndex++;
+      isMoving = true;
+      requestAnimationFrame(moveToNextTarget);
+    });
+
+  return;
+}
+
+
+  // dummy: just advance
+  currentTargetIndex++;
+}
+
+
 
   if (isMoving) {
     requestAnimationFrame(moveToNextTarget);
@@ -1405,7 +1627,7 @@ const checkLoadingPage = () => {
     let allAssetsLoaded = true;
 
     if(!scene)                                  allAssetsLoaded = false;
-    if(!clouds.length === 2)                    allAssetsLoaded = false;
+    if (!clouds || clouds.length < 5) allAssetsLoaded = false;
     if(!character)                              allAssetsLoaded = false;
     if(!Object.keys(grassMeshes).length === 2)  allAssetsLoaded = false;
     if(!Object.keys(treeMeshes).length === 2)   allAssetsLoaded = false;
@@ -1444,4 +1666,6 @@ const checkLoadingPage = () => {
 
 }
 
-setScene();
+setScene().catch(err => {
+  console.error("❌ Error in setScene():", err);
+});
