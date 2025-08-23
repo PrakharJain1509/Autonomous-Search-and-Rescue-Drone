@@ -21,26 +21,46 @@ class MultiDroneServer:
         
         # Generate 9 humans (3 per region)
         self.humans = self.generate_humans()
-        
+
     def generate_humans(self):
         humans = []
+        min_distance = 150  # Minimum distance between any two humans in the same region
+
         for region_id, region in self.regions.items():
+            region_humans = []
             for i in range(3):
-                # Generate position within region bounds (50 units from edge for bigger world)
-                x = random.uniform(region["x_from"] + 50, region["x_to"] - 50)
-                z = random.uniform(region["z_from"] + 50, region["z_to"] - 50)
-                humans.append({
-                    "id": f"{region_id}_human_{i+1}",
-                    "name": f"Human_{len(humans)+1}",
-                    "position": [x, 0, z],
-                    "region": region_id,
-                    "found": False
-                })
-        print(f"✅ Generated {len(humans)} humans:")
+                while True:
+                    # Generate a potential position
+                    x = random.uniform(region["x_from"] + 50, region["x_to"] - 50)
+                    z = random.uniform(region["z_from"] + 50, region["z_to"] - 50)
+
+                    # Check distance against other humans in this region
+                    is_far_enough = True
+                    for other_human in region_humans:
+                        other_pos = other_human["position"]
+                        dist = ((x - other_pos[0]) ** 2 + (z - other_pos[2]) ** 2) ** 0.5
+                        if dist < min_distance:
+                            is_far_enough = False
+                            break
+
+                    if is_far_enough:
+                        # Position is valid, add the human and break the loop
+                        new_human = {
+                            "id": f"{region_id}_human_{i + 1}",
+                            "name": f"Human_{len(humans) + 1}",
+                            "position": [x, 0, z],
+                            "region": region_id,
+                            "found": False
+                        }
+                        region_humans.append(new_human)
+                        humans.append(new_human)
+                        break
+
+        print(f"✅ Generated {len(humans)} humans (spaced apart):")
         for human in humans:
-            print(f"   {human['name']} -> Region: {human['region']} - [{human['position'][0]:.1f}, {human['position'][2]:.1f}]")
+            print(
+                f"   {human['name']} -> Region: {human['region']} - [{human['position'][0]:.1f}, {human['position'][2]:.1f}]")
         return humans
-    
     async def register_client(self, websocket, path):
         """Handle new client connections"""
         try:

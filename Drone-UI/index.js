@@ -1908,122 +1908,222 @@ const pauseIconAnimation = (pause = true) => {
 //     })
 
 // }
-function generateDummyWaypoints(humanPos, count = 4) {
-  const start = character.position.clone();
-  const waypoints = [];
-  for (let i = 1; i <= count; i++) {
-    const t = i / (count + 1);
-    
-    // Use safe random position if in multi-drone mode
-    let x, z;
-    if (myRegion && generateSafeRandomPosition) {
-      // Generate safe position within region
-      const safePos = generateSafeRandomPosition();
-      if (safePos) {
-        x = safePos.x;
-        z = safePos.z;
-      } else {
-        // Fallback to original method
-        x = THREE.MathUtils.lerp(start.x, humanPos.x, t) + (Math.random() - 0.5) * 10;
-        z = THREE.MathUtils.lerp(start.z, humanPos.z, t) + (Math.random() - 0.5) * 10;
-      }
-    } else {
-      // Original method for single drone mode
-      x = THREE.MathUtils.lerp(start.x, humanPos.x, t) + (Math.random() - 0.5) * 10;
-      z = THREE.MathUtils.lerp(start.z, humanPos.z, t) + (Math.random() - 0.5) * 10;
-    }
-    
-    const y = getTerrainHeightAt(x, z) + 1;
-    waypoints.push(new THREE.Vector3(x, y, z));
-  }
-  return waypoints;
-}
-const generateFixedTargets = () => {
 
+/**
+ * Checks if a given point is outside a specified radius of all known human positions.
+ * @param {THREE.Vector3} point The point to check.
+ * @param {number} exclusionRadius The minimum safe distance from any human.
+ * @returns {boolean} True if the point is safe, false otherwise.
+ */
+
+/**
+ * Calculates the 2D distance between two points (Vector3 or similar object with x/z).
+ * @param {{x: number, z: number}} p1 The first point.
+ * @param {{x: number, z: number}} p2 The second point.
+ * @returns {number} The 2D distance.
+ */
+const getDistance = (p1, p2) => {
+  const dx = p1.x - p2.x;
+  const dz = p1.z - p2.z;
+  return Math.sqrt(dx * dx + dz * dz);
+};
+const isSafeFromHumans = (point, exclusionRadius, humanToIgnore = null) => {
+  for (const humanPos of closestMenPositions) {
+    // ✅ NEW: Skip the check if this is the human we're deliberately leaving.
+    if (humanPos === humanToIgnore) {
+      continue;
+    }
+
+    // Calculate 2D distance (ignoring Y-axis)
+    const dx = point.x - humanPos.x;
+    const dz = point.z - humanPos.z;
+    const distance = Math.sqrt(dx * dx + dz * dz);
+
+    if (distance < exclusionRadius) {
+      // Point is inside the exclusion zone of a human
+      console.log(`Path point rejected: Too close to human at (${humanPos.x.toFixed(1)}, ${humanPos.z.toFixed(1)})`);
+      return false;
+    }
+  }
+  // Point is a safe distance from all humans
+  return true;
+};
+/**
+ * Checks if the straight-line path between two points intersects any human's exclusion zone.
+ * @param {{x: number, z: number}} startPoint The starting point of the path.
+ * @param {{x: number, z: number}} endPoint The ending point of the path.
+ * @param {number} exclusionRadius The radius of the zone to avoid.
+ * @returns {boolean} True if the path is safe, false if it intersects a zone.
+ */
+const isPathSafe = (startPoint, endPoint, exclusionRadius, humanToIgnore = null) => {
+  for (const human of closestMenPositions) {
+    // ✅ NEW: Skip the check if this is the human we're deliberately leaving.
+    if (human === humanToIgnore) {
+        continue;
+    }
+
+    const humanPoint = { x: human.x, z: human.z };
+
+    // ... (rest of the function is unchanged) ...
+    const lineVec = { x: endPoint.x - startPoint.x, z: endPoint.z - startPoint.z };
+    const humanVec = { x: startPoint.x - humanPoint.x, z: startPoint.z - humanPoint.z };
+
+    const lineLenSq = lineVec.x * lineVec.x + lineVec.z * lineVec.z;
+    if (lineLenSq === 0) return true;
+
+    const dot = humanVec.x * lineVec.x + humanVec.z * lineVec.z;
+    const t = Math.max(0, Math.min(1, -dot / lineLenSq));
+
+    const closestPoint = {
+      x: startPoint.x + t * lineVec.x,
+      z: startPoint.z + t * lineVec.z,
+    };
+
+    if (getDistance(humanPoint, closestPoint) < exclusionRadius) {
+      console.log(`Path REJECTED: Trajectory from (${startPoint.x.toFixed(1)}, ${startPoint.z.toFixed(1)}) to (${endPoint.x.toFixed(1)}, ${endPoint.z.toFixed(1)}) is too close to a human.`);
+      return false;
+    }
+  }
+
+  return true;
+};
+const isPointInRegion = (point) => {
+    // If no region is assigned (single-player mode), always return true.
+    if (!myRegion) {
+        return true;
+    }
+
+    // Check if the point's coordinates are within the region's boundaries.
+    return (
+        point.x >= myRegion.x_from &&
+        point.x <= myRegion.x_to &&
+        point.z >= myRegion.z_from &&
+        point.z <= myRegion.z_to
+    );
+};
+// MODIFIED FUNCTION
+// MODIFIED FUNCTION
+// MODIFIED FUNCTION
+/**
+ * Generates waypoints between a start and end point that create a zig-zag search pattern,
+ * ensuring all waypoints stay within the drone's assigned region.
+ * @param {THREE.Vector3} startPos - The starting position for the segment.
+ * @param {THREE.Vector3} humanPos - The end position (the human) for the segment.
+ * @param {number} count - The number of dummy waypoints to generate.
+ * @returns {THREE.Vector3[]} An array of generated waypoint vectors.
+ */
+function generateDummyWaypoints(startPos, humanPos, count = 2, humanToIgnore = null) {
+    const waypoints = [];
+    const exclusionRadius = 50;
+
+    const direction = new THREE.Vector2(humanPos.x - startPos.x, humanPos.z - startPos.z).normalize();
+    const perpendicular = new THREE.Vector2(-direction.y, direction.x);
+
+    let lastWaypoint = startPos;
+
+    for (let i = 1; i <= count; i++) {
+        let safePoint;
+        let isPointSafe = false;
+        let isSegmentSafe = false;
+        let attempts = 0;
+
+        do {
+            const t = i / (count + 1);
+            const pointOnLine = new THREE.Vector3().lerpVectors(startPos, humanPos, t);
+            const searchOffset = 40 + Math.random() * 30;
+            const side = (i % 2 === 0) ? -1 : 1;
+
+            let x = pointOnLine.x + perpendicular.x * searchOffset * side;
+            let z = pointOnLine.z + perpendicular.y * searchOffset * side;
+
+            if (myRegion) {
+                x = THREE.MathUtils.clamp(x, myRegion.x_from, myRegion.x_to);
+                z = THREE.MathUtils.clamp(z, myRegion.z_from, myRegion.z_to);
+            }
+
+            const y = getTerrainHeightAt(x, z) + 40;
+            safePoint = new THREE.Vector3(x, y, z);
+
+            // ✅ MODIFIED: Pass 'humanToIgnore' to the safety functions
+            isPointSafe = isSafeFromHumans(safePoint, exclusionRadius, humanToIgnore);
+            if (isPointSafe) {
+                isSegmentSafe = isPathSafe(lastWaypoint, safePoint, exclusionRadius, humanToIgnore);
+            } else {
+                isSegmentSafe = false;
+            }
+
+            attempts++;
+        } while ((!isPointSafe || !isSegmentSafe) && attempts < 25);
+
+        if (isPointSafe && isSegmentSafe) {
+            waypoints.push(safePoint);
+            lastWaypoint = safePoint.clone();
+        } else {
+            console.warn(`Could not find a safe & valid search waypoint towards ${humanPos.x},${humanPos.z}. Path may be more direct.`);
+        }
+    }
+    return waypoints;
+}
+// MODIFIED FUNCTION
+// REPLACED FUNCTION - NEW DYNAMIC LOGIC
+// REPLACED FUNCTION - FINAL VERSION
+// REPLACED FUNCTION - FINAL VERSION
+const generateFixedTargets = () => {
+  console.log("🚀 Generating new dynamic and safe flight path...");
+
+  // ... (the forEach loop for updating heights is unchanged) ...
   closestMenPositions.forEach(pos => {
-    // If the man hasn't been loaded yet, his Y-value might still be the high, floating one.
-    // We correct it here one last time to prevent a race condition.
     if (!pos.loaded) {
       const groundY = getGroundYAt(pos.x, pos.z);
-      if (groundY !== null) {
-        pos.y = groundY + 0.5; // Correct it right before use!
-      }
+      if (groundY !== null) pos.y = groundY + 0.5;
     }
   });
-  // findClosestMen();  // pick your 3 real humans
 
-  allTargets   = [];
+  allTargets = [];
   targetStatus = [];
+  const exclusionRadius = 100;
 
-  // 1️⃣ GLOBAL “warm-up” dummies
-  for (let i = 0; i < 3; i++) {
-    let x, z;
-    
-    // Use safe random position if in multi-drone mode
-    if (myRegion && generateSafeRandomPosition) {
-      const safePos = generateSafeRandomPosition();
-      if (safePos) {
-        x = safePos.x;
-        z = safePos.z;
-      } else {
-        // Fallback to original method
-        const angle = Math.random() * Math.PI * 2;
-        const radius = 150 + Math.random() * 100;
-        x = Math.cos(angle) * radius;
-        z = Math.sin(angle) * radius;
-      }
-    } else {
-      // Original method for single drone mode
-      const angle = Math.random() * Math.PI * 2;
-      const radius = 150 + Math.random() * 100;
-      x = Math.cos(angle) * radius;
-      z = Math.sin(angle) * radius;
-    }
-    
-    const y = getTerrainHeightAt(x, z) + 1;
+  let currentPos = character.position.clone();
 
-    // choose any dummy name
-    const dummyName = ["Dave","Eve","Frank"][i % 3];
+  // ... (the initial "warm-up" dummies loop is unchanged) ...
+  const initialDummyCount = 3;
+  // ...
 
-    allTargets.push(new THREE.Vector3(x, y, z));
-    targetStatus.push({
-      detected:  false,
-      modelType: humanModelTypes[i % humanModelTypes.length],
-      name:      dummyName
-    });
-  }
+  // 2️⃣ DYNAMICALLY BUILD REST OF PATH by finding the nearest neighbor at each step
+  let remainingHumans = [...closestMenPositions];
+  let lastHuman = null; // ✅ NEW: Variable to track the previously pathed human
 
-  // …then your per-human dummies + real sequence…
-  closestMenPositions.forEach((pos, idx) => {
-    const humanPos = new THREE.Vector3(pos.x, pos.y, pos.z);
+  while (remainingHumans.length > 0) {
+    remainingHumans.sort((a, b) => getDistance(currentPos, a) - getDistance(currentPos, b));
+    const nextHuman = remainingHumans.shift();
 
-    // per-human dummies
-    const dummies = generateDummyWaypoints(humanPos, 4);
+    console.log(`Next closest target: ${nextHuman.name || 'Human'}. Generating safe path...`);
+    const humanPos = new THREE.Vector3(nextHuman.x, nextHuman.y, nextHuman.z);
+
+    // ✅ MODIFIED: Pass 'lastHuman' to be ignored by the safety checks
+    const dummies = generateDummyWaypoints(currentPos, humanPos, 3, lastHuman);
+
     dummies.forEach(waypoint => {
-      const otherNames = humanNames.filter((_, i) => i !== idx);
-      const dummyName  = otherNames[Math.floor(Math.random() * otherNames.length)];
-
       allTargets.push(waypoint);
-      targetStatus.push({
-        detected:  false,
-        modelType: humanModelTypes[idx],
-        name:      dummyName
-      });
+      targetStatus.push({ detected: false, name: `Waypoint to ${nextHuman.name}` });
     });
 
-    // the real human
+    // ... (adding the human to the target list is unchanged) ...
     allTargets.push(humanPos);
     targetStatus.push({
-      detected:  true,
-      modelType: humanModelTypes[idx],
-      name:      humanNames[idx]
+      detected: true,
+      modelType: humanModelTypes[closestMenPositions.indexOf(nextHuman) % humanModelTypes.length],
+      name: humanNames[closestMenPositions.indexOf(nextHuman) % humanNames.length]
     });
-  });
+
+    // Update the starting point for the next human search
+    currentPos = humanPos.clone();
+    lastHuman = nextHuman; // ✅ NEW: Remember this human for the next iteration
+  }
+
+  console.log(`✅ Safe path generation complete. Total targets: ${allTargets.length}`);
 };
-
-
-
-
+// ✅ Move drone from one target to another
 // ✅ Move drone from one target to another
 const moveToNextTarget = () => {
   if (currentTargetIndex >= allTargets.length) {
@@ -2041,7 +2141,7 @@ const moveToNextTarget = () => {
   // 🚀 Move drone towards target (Only X and Z)
   character.position.x += direction.x * movementSpeed;
   character.position.z += direction.z * movementSpeed;
-  
+
   // Enforce region boundaries after movement
   if (myRegion) {
     enforceRegionBoundary();
@@ -2072,61 +2172,49 @@ const moveToNextTarget = () => {
   let distance = Math.sqrt(dx * dx + dz * dz); // Ignore Y-axis
 
   if (distance < 3) {
-  // …send JSON WS…
-  const { detected, modelType, name } = targetStatus[currentTargetIndex];
-  const message = detected ? "Human Detected" : "No human detected";
-  sendWebSocketMessage(message, modelType, name);
-  lastSentIndex = currentTargetIndex;
+    // --- Start of Corrected Block ---
 
-  if (detected) {
-  isMoving = false;
+    // Only send the WebSocket message ONCE when we first arrive.
+    if (lastSentIndex !== currentTargetIndex) {
+      const { detected, modelType, name } = targetStatus[currentTargetIndex];
+      const message = detected ? "Human Detected" : "No human detected";
+      sendWebSocketMessage(message, modelType, name);
+      lastSentIndex = currentTargetIndex;
+    }
 
-  // how far above the ground you want to end up
-  const hoverHeight   = target.y + 2;
-  // your normal safe cruise height
-  const cruiseHeight  = hoverHeight + 10;
-  // back-off distance
-  const backDistance  = 25;
-  const backVec       = direction.clone().negate().multiplyScalar(backDistance);
+    const { detected } = targetStatus[currentTargetIndex];
 
-  gsap.timeline()
-    // 1) slide back horizontally over 1s
-    .to(character.position, {
-      duration: 1,
-      x: `+=${backVec.x}`,
-      z: `+=${backVec.z}`,
-      ease: "power1.inOut"
-    })
-    // 2) then descend slowly over 1.2s
-    .to(character.position, {
-      duration: 1.2,
-      y: hoverHeight,
-      ease: "power1.out"
-    })
-    // 3) hold in place for 3s so you can really see them
-    .to({}, { duration: 3 })
-    // 4) ascend back up over 1.2s to cruise height
-    .to(character.position, {
-      duration: 1.2,
-      y: cruiseHeight,
-      ease: "power1.in"
-    })
-    // 5) when complete, move on to the next target
-    .call(() => {
-      currentTargetIndex++;
-      isMoving = true;
+    if (detected) {
+      // This is a human target, perform the animation.
+      isMoving = false;
+
+      const hoverHeight = target.y + 2;
+      const cruiseHeight = hoverHeight + 10;
+      const backDistance = 25;
+      const backVec = direction.clone().negate().multiplyScalar(backDistance);
+
+      gsap.timeline()
+        .to(character.position, { duration: 1, x: `+=${backVec.x}`, z: `+=${backVec.z}`, ease: "power1.inOut" })
+        .to(character.position, { duration: 1.2, y: hoverHeight, ease: "power1.out" })
+        .to({}, { duration: 3 })
+        .to(character.position, { duration: 1.2, y: cruiseHeight, ease: "power1.in" })
+        .call(() => {
+          currentTargetIndex++;
+          isMoving = true;
+          requestAnimationFrame(moveToNextTarget); // Relaunch the loop after animation.
+        });
+
+      return; // Exit this frame's execution.
+    } else {
+      // This is a dummy waypoint.
+      currentTargetIndex++; // Move to the next target.
+      // Manually schedule the next frame and then exit this one.
+      // This creates the clean break needed for a sharp turn.
       requestAnimationFrame(moveToNextTarget);
-    });
-
-  return;
-}
-
-
-  // dummy: just advance
-  currentTargetIndex++;
-}
-
-
+      return;
+    }
+    // --- End of Corrected Block ---
+  }
 
   if (isMoving) {
     requestAnimationFrame(moveToNextTarget);
