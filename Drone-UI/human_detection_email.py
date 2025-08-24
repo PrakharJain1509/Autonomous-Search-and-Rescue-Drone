@@ -28,21 +28,29 @@ class HumanDetectionEmailer:
                 'description': 'Heat signature detection using thermal camera',
                 'icon': '🔥',
                 'confidence': 'High',
-                'media_file': '/Users/abhisheksaraff/Desktop/NationalCollege/Autonomous-Search-and-Rescue-Drone/Drone-Dashboard-Frontend/public/test_data/thermal/human/FLIR_07538_jpeg_jpg.rf.62bf28b984602aa4263620ad277675c8.jpg'
+                'media_files': [
+                    '../Drone-Recognition-Dashboard/thermal_detected_1.png',
+                    '../Drone-Recognition-Dashboard/thermal_detected_2.png',
+                    '../Drone-Recognition-Dashboard/thermal_detected_3.png',
+                    '../Drone-Recognition-Dashboard/thermal_detected_4.png'
+                ]
             },
             'audio': {
                 'name': 'Audio Detection System',
                 'description': 'Sound analysis using advanced audio processing',
                 'icon': '🎵',
                 'confidence': 'Medium',
-                'media_file': '/Users/abhisheksaraff/Desktop/NationalCollege/Autonomous-Search-and-Rescue-Drone/Drone-Dashboard-Frontend/public/test_data/audio/human/PES University Road 5.m4a'
+                'media_files': [
+                    'test_data/audio/human/PES University Road 5.m4a',
+                    '../Drone-Recognition-Dashboard/shout-104972.mp3'
+                ]
             },
             'visual': {
                 'name': 'Image Detection System',
                 'description': 'AI-powered image recognition',
                 'icon': '👁️',
                 'confidence': 'High',
-                'media_file': '/Users/abhisheksaraff/Desktop/NationalCollege/Autonomous-Search-and-Rescue-Drone/Drone-Dashboard-Frontend/public/test_data/image/human/asd.png'
+                'media_file': '../Drone-Recognition-Dashboard/human_detected_1.png'
             }
         }
         
@@ -60,7 +68,21 @@ class HumanDetectionEmailer:
 
     def get_media_file(self, method):
         """Get the specific media file for the detection method"""
-        return self.detection_methods[method]['media_file']
+        method_info = self.detection_methods[method]
+        
+        # Get the current script directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Check if it's a list of files (for thermal and audio)
+        if 'media_files' in method_info:
+            relative_path = random.choice(method_info['media_files'])
+        else:
+            # Single file (for visual)
+            relative_path = method_info['media_file']
+        
+        # Convert relative path to absolute path
+        absolute_path = os.path.abspath(os.path.join(script_dir, relative_path))
+        return absolute_path
 
     def create_beautiful_email_html(self, detection_data):
         """Create a beautiful, professional HTML email"""
@@ -391,7 +413,16 @@ class HumanDetectionEmailer:
                 file_data = f.read()
                 
                 if method == 'audio':
-                    attachment = MIMEAudio(file_data, _subtype='m4a')
+                    # Determine audio subtype based on file extension
+                    file_ext = os.path.splitext(file_path)[1].lower()
+                    if file_ext == '.m4a':
+                        audio_subtype = 'm4a'
+                    elif file_ext == '.mp3':
+                        audio_subtype = 'mp3'
+                    else:
+                        audio_subtype = 'mpeg'  # fallback
+                    
+                    attachment = MIMEAudio(file_data, _subtype=audio_subtype)
                     attachment.add_header('Content-Disposition', 'attachment', 
                                         filename=os.path.basename(file_path))
                 elif method == 'visual':
