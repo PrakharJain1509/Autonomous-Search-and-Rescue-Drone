@@ -155,7 +155,7 @@ class MultiDroneServer:
     
     def check_humans_in_fov(self, drone_id, drone_pos):
         """Check if any humans are within drone's field of view"""
-        fov_radius = 80  # Detection radius (increased for better detection)
+        fov_radius = 50  # Detection radius (increased for better detection)
         humans_found = []
         
         for human in self.humans:

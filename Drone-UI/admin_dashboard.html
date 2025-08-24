@@ -266,11 +266,6 @@
             <div class="map">
                 <div class="world-grid"></div>
                 
-                <!-- Region boundaries -->
-                <div class="region-boundary region-d1"></div>
-                <div class="region-boundary region-d2"></div>
-                <div class="region-boundary region-d3"></div>
-                
                 <!-- Drone markers will be added dynamically -->
                 <div id="drone-markers"></div>
                 
@@ -533,7 +528,7 @@
                 let regionColor = '#ffd93d'; // Default yellow
                 if (human.region === 'D1') regionColor = '#ff6b6b'; // Red for D1
                 else if (human.region === 'D2') regionColor = '#054064'; // Blue for D2
-                else if (human.region === 'D3') regionColor = '#45d163'; // Green for D3
+                else if (human.region === 'D3') regionColor = '#78143c'; // Green for D3
                 
                 marker.style.backgroundColor = regionColor;
                 
