@@ -59,11 +59,12 @@ Each region contains 3 randomly placed humans (9 total).
 
 ### 1. Start the Server (Laptop 4 - Admin)
 Run this in another terminal
+Terminal 1
 ```bash
 cd Drone-UI
 python python -m http.server
 ```
-
+Terminal 2
 ```bash
 cd Drone-UI
 python multi_drone_server.py
